@@ -48,14 +48,14 @@ def main():
         batch_size=32,
         callbacks=[
             create_early_stopping(patience=10),
-            create_model_checkpoint('best_model.h5')
+            create_model_checkpoint('best_model.keras')
         ],
         verbose=1
     )
 
     # 5. Evaluate model
     print("Evaluating model...")
-    model.load_weights('best_model.h5')
+    model.load_weights('best_model.keras')
     y_pred = model.predict(X_test)
     metrics = calculate_metrics(y_test, y_pred)
     print("Test Metrics:")
@@ -64,17 +64,49 @@ def main():
 
     # 6. Plot predictions
     print("Plotting predictions...")
-    fig = plot_predictions(y_test, y_pred)
-    fig.show()
+    # Create dummy arrays with the same number of features, fill with zeros
+    n_features = len(features.columns)
+    y_test_full = np.zeros((len(y_test), n_features))
+    y_pred_full = np.zeros((len(y_pred), n_features))
+
+    # Find the index of the 'returns' column
+    returns_idx = list(features.columns).index('returns')
+
+    # Place your predictions and true values in the correct column
+    y_test_full[:, returns_idx] = y_test.flatten()
+    y_pred_full[:, returns_idx] = y_pred.flatten()
+
+    # Inverse transform
+    y_test_inv = scaler.inverse_transform(y_test_full)[:, returns_idx]
+    y_pred_inv = scaler.inverse_transform(y_pred_full)[:, returns_idx]
+
+    # Reconstruct price series from returns
+    test_start_idx = len(features) - len(y_test_inv)
+    start_price = sp500_data['Close'].iloc[test_start_idx - 1]
+
+    actual_prices = [start_price]
+    predicted_prices = [start_price]
+    for actual_r, pred_r in zip(y_test_inv, y_pred_inv):
+        actual_prices.append(actual_prices[-1] * (1 + actual_r))
+        predicted_prices.append(predicted_prices[-1] * (1 + pred_r))
+    actual_prices = actual_prices[1:]
+    predicted_prices = predicted_prices[1:]
+
+    # Plot actual vs predicted prices
+    fig_price = go.Figure()
+    fig_price.add_trace(go.Scatter(y=actual_prices, name='Actual Price', line=dict(color='blue')))
+    fig_price.add_trace(go.Scatter(y=predicted_prices, name='Predicted Price', line=dict(color='red')))
+    fig_price.update_layout(title='Actual vs Predicted Prices', xaxis_title='Time', yaxis_title='Price', showlegend=True)
+    fig_price.write_html("price_predictions_plot.html")
 
     # 7. Backtest strategy
     print("Running backtest...")
-    results = backtest_strategy(y_test, y_pred, threshold=0.001)
+    results = backtest_strategy(y_test_inv, y_pred_inv, threshold=0.001)
     fig2 = go.Figure()
     fig2.add_trace(go.Scatter(y=results['cumulative_returns'], name='Buy & Hold', line=dict(color='blue')))
     fig2.add_trace(go.Scatter(y=results['cumulative_strategy_returns'], name='Strategy', line=dict(color='red')))
     fig2.update_layout(title='Cumulative Returns', xaxis_title='Time', yaxis_title='Cumulative Return', showlegend=True)
-    fig2.show()
+    fig2.write_html("cumulative_returns_plot.html")
 
 if __name__ == "__main__":
     main()
